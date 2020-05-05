@@ -1,3 +1,11 @@
+# secret keys
+keys.json
+
+# dobble images
+/images/
+# dobble card output
+/card_output/
+
 # History files
 .Rhistory
 .Rapp.history
@@ -37,3 +45,6 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+
+# pkgdown site
+docs/
