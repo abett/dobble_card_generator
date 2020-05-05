@@ -60,11 +60,11 @@ projective_plane_orders
 pexels_api_key <- jsonlite::read_json('keys.json')[['pexels_api_key']]
 
 # order of the projective geometry, governing the number of cards generated & images needed
-game.order <- 7
+game.order <- 8
 
-pdf.nrow <- 3
-pdf.ncol <- 2
-
+page.nrow <- 3
+page.ncol <- 2
+output_format <- 'png' #'png' or 'pdf'
 
 image_resize.max_side <- 800
 
@@ -76,7 +76,7 @@ game.number_of_cards <- projective_plane_orders %>% filter(order == game.order) 
 game.number_of_symbols <- projective_plane_orders %>% filter(order == game.order) %>% pull(number_of_symbols)
 game.symbols_per_card <- projective_plane_orders %>% filter(order == game.order) %>% pull(symbols_per_card)
 
-pdf.cards_per_page <- pdf.nrow * pdf.ncol
+cards_per_page <- page.nrow * page.ncol
 ```
 
 All set for a game of *J(onas)obble* of order `r game.order`!  
@@ -175,7 +175,7 @@ for(i in 1:nrow(image_files.final)) {
     image_file_path.resized <- file.path(image_folder_path.final, basename(image_files.final$image_file_path.src[i]))
     
     magick::image_write(img.resized, image_file_path.resized)
-    print(sprintf('resized %s to the dimensions %sx%s px', basename(image_files.final$image_file_path.src[i]), magick::image_info(img.resized)$width, magick::image_info(img.resized)$height))
+    # print(sprintf('resized %s to the dimensions %sx%s px', basename(image_files.final$image_file_path.src[i]), magick::image_info(img.resized)$width, magick::image_info(img.resized)$height))
     
     image_files.final$image_file_path.resized[i] <- image_file_path.resized
   })
@@ -186,6 +186,8 @@ image_files.final <- image_files.final %>%
   bind_cols(
     magick::image_read(.$image_file_path.resized) %>% magick::image_info()
   )
+
+print(sprintf('resized %s images from the input & backfill folders to max dimensions %sx%s px', nrow(image_files.final),image_resize.max_side,image_resize.max_side))
 ```
 
 We've now gathered & resized `r nrow(image_files.final)` image files to work into the game
@@ -278,13 +280,19 @@ generate_image_coordinates.circlepacking <- function(image_file_paths, margin = 
 
 ```{r}
 dobble_cards.permutations <- generate_dobble_permutations(game.order)
-#dobble_cards.images <- lapply(dobble_cards.permutations, function(indices){image_files.final[indices]})
+```
 
-#dobble_images.matrix <- matrix(nrow = length(dobble_images), ncol = length(dobble_images), dimnames = list(dobble_images,dobble_images))
-#for(i in 1:length(dobble_cards.permutations)) {
-#  dobble_images.matrix[i,dobble_cards.permutations[[i]]] <- 1
-#}
+We now have a list of `game.number_of_cards` cards with generic numbers representing the `r game.number_of_symbols` symbols we will use.  
+Let's look at the top few:
 
+```{r}
+head(dobble_cards.permutations)
+```
+
+We'll break this up into a dataframe where we will have one row per symbol on each card.  
+Also, we're assigning the prepared images by using the symbol-number as an index.
+
+```{r}
 dobble_cards.df <- dobble_cards.permutations %>%
   map_dfr(.f = function(indices){
     tibble(
@@ -299,9 +307,12 @@ dobble_cards.df <- dobble_cards.permutations %>%
     image_file_path = image_files.final$image_file_path.resized[symbol],
     image_name = basename(image_file_path)
   )
+
+dobble_cards.df
 ```
 
-We can plot the distribution of images (x-axis) on our cards (y-axis):
+To visualize the distribution of images onto the cards, we can plot a matrix of cards (y-axis) and the symbols printed on them (x-axis).  
+We can see that there is always one symbol that is shared among any two cards, but not more.
 
 ```{r fig.height=7, fig.width=7}
 dobble_cards.df %>%
@@ -324,13 +335,16 @@ dobble_cards.df %>%
 
 ## Distribute Images on Cards
 
+Finally, we need to figure out where to place the image files on the generated cards (which will be plotted as charts using ggplot).  
+We will use a circlepacking approach, where we identify for each image a circle into which it can fit and then densely pack these around the (0,0) center of the plot.  
+
 ```{r}
 image_margin <- image_resize.max_side * 0.025 # for 1000px resized images, this is 5px each, so 10px spacing in between
 
 # calculate the image coordinates for each card
 dobble_cards.image_coords <- dobble_cards.df %>%
   group_by(card_id) %>%
-  group_map(~generate_image_coordinates.circlepacking(.$image_file_path, margin = image_margin)) %>% # adds a margin of 5px to space the images a little
+  group_map(~generate_image_coordinates.circlepacking(.$image_file_path, margin = image_margin)) %>% 
   # unfortunately, the packcircles methods don't center the results around (0,0), so we correct their x & y values here
   mutate(
     tmp.real_circle_center.x = (min(x-radius) + max(x+radius))/2,
@@ -341,7 +355,13 @@ dobble_cards.image_coords <- dobble_cards.df %>%
   ) %>%
   ungroup() %>%
   select(-starts_with('tmp.'))
+```
 
+We've laid out all of the images on our cards, given them a margin of `r image_margin` px each, so that they would have a little space in between them.  
+Having prepared these "circles", we can check across all cards for the most distant circle that still needs to be on a card.  
+That will set the outer radius which we will draw to be able to cut out equal sized round playing cards.
+
+```{r}
 dobble_cards.card_radius <- dobble_cards.image_coords %>%
   summarise(
     outer_radius = max(sqrt(x^2+y^2) + radius)
@@ -351,8 +371,9 @@ dobble_cards.card_radius <- dobble_cards.image_coords %>%
   {. + 2}
 ```
 
-We've laid out all of the images on our cards, given them a margin of `r image_margin` px each, so that they would have a little space in between them.  
-To accommodate all pictures safely, the cards will all have a radius of `r dobble_cards.card_radius` px.
+To accommodate all pictures safely, the cards will all have a radius of `r dobble_cards.card_radius` px.  
+
+We can plot this without the actual images, to see a bit more clearly how this will look like for the first 4 cards.
 
 ```{r}
 dobble_cards.image_boundaries.circles <- dobble_cards.image_coords %>%
@@ -375,13 +396,11 @@ dobble_cards.image_boundaries.squares <- dobble_cards.image_coords %>%
   )
 ```
 
-We can plot this without the actual images, to see a bit more clearly how this will look like for the first 4 cards.
-
 ```{r fig.height=9, fig.width=7}
 ggplot() +
   geom_polygon(
     data = dobble_cards.image_boundaries.circles %>%
-      filter(card_id <= pdf.cards_per_page),
+      filter(card_id <= cards_per_page),
     aes(
       x, y,
       group = id,
@@ -392,7 +411,7 @@ ggplot() +
   ) +
   geom_rect(
     data = dobble_cards.image_boundaries.squares %>%
-      filter(card_id <= pdf.cards_per_page),
+      filter(card_id <= cards_per_page),
     aes(
       xmin = x0, xmax = x1,
       ymin = y0, ymax = y1,
@@ -403,7 +422,7 @@ ggplot() +
   ) +
   geom_text(
     data = dobble_cards.image_coords %>%
-      filter(card_id <= pdf.cards_per_page) %>%
+      filter(card_id <= cards_per_page) %>%
       left_join(dobble_cards.df, by = c('card_id', 'image_file_path')),
     aes(
       x, y,
@@ -411,7 +430,7 @@ ggplot() +
     )
   ) +
   ggforce::geom_circle(
-    data = tibble(card_id = 1:pdf.cards_per_page),
+    data = tibble(card_id = 1:cards_per_page),
     aes(
       x0 = 0,
       y0 = 0,
@@ -422,14 +441,14 @@ ggplot() +
   ) +
   scale_color_discrete(aesthetics = c('color','fill'), guide = F) +
   coord_fixed() +
-  facet_wrap(~card_id, nrow = pdf.nrow, ncol = pdf.ncol) +
+  facet_wrap(~card_id, nrow = page.nrow, ncol = page.ncol) +
   theme(panel.spacing=unit(0, 'mm'))
 ```
 
 
 ## Finalize Card Set
 
-We'll bind the calculated image coordinates to our previously generated permutation data and receive a data table that tells us exactly which image will go on which card and where.
+Now we'll bind the calculated image coordinates to our previously generated permutation data and receive a data table that tells us exactly which image will go on which card *and where*.
 
 ```{r}
 dobble_cards.final <- dobble_cards.df %>%
@@ -439,34 +458,25 @@ dobble_cards.final <- dobble_cards.df %>%
   )
 ```
 
-Using that, we'll generate a pdf with `r ceiling(game.number_of_cards/pdf.cards_per_page)` pages (holding `r pdf.cards_per_page` cards each) into the output folder `r output_folder_path`.
+Using that, we'll generate `r ceiling(game.number_of_cards/cards_per_page)` pages in `r output_format` format (holding `r cards_per_page` cards each) into the output folder `r output_folder_path`.
 
 ```{r}
-pdf_pages <- tibble(
-    page_i = 1:ceiling(game.number_of_cards/pdf.cards_per_page),
-    pdf_content.cards.first_id = (page_i-1)*pdf.cards_per_page +1,
-    pdf_content.cards.last_id = pmin(page_i*pdf.cards_per_page, game.number_of_cards)
+pages <- tibble(
+    page_i = 1:ceiling(game.number_of_cards/cards_per_page),
+    cards.first_id = (page_i-1)*cards_per_page +1,
+    cards.last_id = pmin(page_i*cards_per_page, game.number_of_cards)
   )
 
 
-for(page_i in 1:nrow(pdf_pages)) {
-  pdf_page <- pdf_pages[page_i,]
+for(page_i in 1:nrow(pages)) {
+  page <- pages[page_i,]
   
-  pdf_file_path = file.path(output_folder_path, paste(strftime(lubridate::now(), '%Y-%m-%d'), sprintf('jonasobble_page_%02d.pdf',page_i), sep = '_'))
-  pdf_title = sprintf('J(onas)obble Game, page %s of %s', page_i, nrow(pdf_pages))
+  page_filename = paste(strftime(lubridate::now(), '%Y-%m-%d'), sprintf('jonasobble_page_%02d',page_i), sep = '_')
+  page_title = sprintf('J(onas)obble Game, page %s of %s', page_i, nrow(pages))
   
-  #pdf(
-  #  file = pdf_file_path,
-  #  title = pdf_title,
-  #  paper = 'a4',
-  #  width = 8, height = 11.5,
-  #  bg = 'transparent',
-  #  compress = F
-  #)
-  
-  pdf_page_plot <- ggplot() +
+  page_plot <- ggplot() +
     ggforce::geom_circle(
-      data = tibble(card_id = pdf_page$pdf_content.cards.first_id:pdf_page$pdf_content.cards.last_id),
+      data = tibble(card_id = seq(page$cards.first_id, page$cards.first_id+cards_per_page-1)),
       aes(
         x0 = 0,
         y0 = 0,
@@ -478,8 +488,8 @@ for(page_i in 1:nrow(pdf_pages)) {
     ggimage::geom_image(
       data = dobble_cards.final %>%
         filter(
-          card_id >= pdf_page$pdf_content.cards.first_id,
-          card_id <= pdf_page$pdf_content.cards.last_id
+          card_id >= page$cards.first_id,
+          card_id <= page$cards.last_id
         ),
       aes(
         x = x,
@@ -489,19 +499,31 @@ for(page_i in 1:nrow(pdf_pages)) {
       )
     ) +
     coord_fixed() +
-    facet_wrap(~card_id, nrow = pdf.nrow, ncol = pdf.ncol, strip.position = 'left') +
+    facet_wrap(~card_id, nrow = page.nrow, ncol = page.ncol, strip.position = 'left') +
     theme_void()
   
-  #print(pdf_page_plot)
-  ggsave(
-    filename = paste(strftime(lubridate::now(), '%Y-%m-%d'), sprintf('jonasobble_page_%02d.png',page_i), sep = '_'),
-    device = 'png',
-    width = 210, height = 297, units = 'mm', # a4
-    dpi = 320,
-    path = output_folder_path
-  )
+  if(output_format == 'pdf') {
+    pdf(
+      file = file.path(output_folder_path, paste0(page_filename, '.pdf')),
+      title = pdf_title,
+      paper = 'a4',
+      width = 8, height = 11.5,
+      bg = 'transparent',
+      compress = F
+    )
+    print(page_plot)
+    dev.off()
+    
+  } else if(output_format == 'png') {
+    ggsave(
+      filename = paste0(page_filename,'.png'),
+      device = 'png',
+      width = 210, height = 297, units = 'mm', # a4
+      dpi = 320,
+      path = output_folder_path
+    )
+  } 
   
-  #dev.off()
   print(paste('printed page',page_i))
 }
 ```
