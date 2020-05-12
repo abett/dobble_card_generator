@@ -2,9 +2,12 @@
 keys.json
 
 # dobble images
-/images/
+/images/*
 # dobble card output
-/card_output/
+/card_output/*
+
+# external scripts
+/external_scripts/*
 
 # History files
 .Rhistory

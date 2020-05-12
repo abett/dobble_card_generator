@@ -31,15 +31,14 @@ For now, here's some good resources to understand it (ordered by level of brainf
 2. http://www.petercollingridge.co.uk/blog/mathematics-toys-and-games/dobble/
 3. http://www.mathpuzzle.com/MAA/47-Fano/mathgames_05_30_06.html
 
-Following is a list of orders for which we can construct Dobble sets, the number of symbols necessary to do so and the number of cards generated (equal to the number of symbols on each card).
+Following is a list of orders for which we can construct Dobble sets, the number of symbols necessary to do so and the number of cards generated (equal to the number of symbols on each card). 
+
+Theoretically, it is possible to find solutions for any order that is a power of a prime number, but you'd have to get into irreducible polynomials to construct the finite field. I don't even. [This guy does even](https://github.com/HoustonWeHaveABug/spot-it-cards-generator) and it's a few hundred lines of C which I wouldn't be able to translate :))  
 
 ```{r}
 projective_plane_orders <- tibble(
     order = sort(c(
-      primes::generate_primes(min=1, max=100),
-      primes::generate_primes(min=1, max=50)^2,
-      primes::generate_primes(min=1, max=20)^3,
-      primes::generate_primes(min=1, max=20)^4
+      primes::generate_primes(min=1, max=100)
     )),
     number_of_cards = order^2 + order + 1,
     number_of_symbols = number_of_cards,
@@ -60,7 +59,7 @@ projective_plane_orders
 pexels_api_key <- jsonlite::read_json('keys.json')[['pexels_api_key']]
 
 # order of the projective geometry, governing the number of cards generated & images needed
-game.order <- 8
+game.order <- 7
 
 page.nrow <- 3
 page.ncol <- 2
@@ -91,6 +90,7 @@ This will generate a set of `r game.number_of_cards` cards, with `r game.symbols
 ```{r}
 image_folder_path <- 'images'
 output_folder_path <- 'card_output'
+script_folder_path <- 'external_scripts'
 
 if(!dir.exists(image_folder_path)) { dir.create(image_folder_path) }
 
@@ -283,13 +283,27 @@ dobble_cards.permutations <- generate_dobble_permutations(game.order)
 ```
 
 We now have a list of `game.number_of_cards` cards with generic numbers representing the `r game.number_of_symbols` symbols we will use.  
-Let's look at the top few:
+Checking the symbol-list intersection of all possible card combinations shows that indeed there is exactly one symbol in common in between any two cards:
 
 ```{r}
-head(dobble_cards.permutations)
+expand.grid(
+    card1 = 1:game.number_of_cards,
+    card2 = 1:game.number_of_cards
+  ) %>%
+  filter(
+    card1 < card2
+  ) %>%
+  mutate(
+    num_identical_symbols = map2_int(
+      card1, 
+      card2, 
+      .f=function(a,b){length(intersect(dobble_cards.permutations[[a]],dobble_cards.permutations[[b]]))}
+    )
+  ) %>%
+  count(num_identical_symbols, sort=T)
 ```
 
-We'll break this up into a dataframe where we will have one row per symbol on each card.  
+Now we'll break this up into a dataframe where we will have one row per symbol on each card. This will make it easy to plot the cards using ggplot.  
 Also, we're assigning the prepared images by using the symbol-number as an index.
 
 ```{r}
@@ -519,7 +533,7 @@ for(page_i in 1:nrow(pages)) {
       filename = paste0(page_filename,'.png'),
       device = 'png',
       width = 210, height = 297, units = 'mm', # a4
-      dpi = 320,
+      dpi = 600,# 320 should be way enough, actually
       path = output_folder_path
     )
   } 
